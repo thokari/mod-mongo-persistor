@@ -139,6 +139,9 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
         case "save":
           doSave(message);
           break;
+        case "insert":
+          doInsert(message);
+          break;
         case "update":
           doUpdate(message);
           break;
@@ -180,35 +183,20 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
       sendError(message, e.getMessage(), e);
     }
   }
-
-  private void doSave(Message<JsonObject> message) {
-    String collection = getMandatoryString("collection", message);
-    if (collection == null) {
-      return;
-    }
-    JsonObject doc = getMandatoryObject("document", message);
-    if (doc == null) {
-      return;
-    }
-    String genID;
+  
+  private String addGeneratedID(JsonObject doc) {
+  	String genID;
     if (doc.getField("_id") == null) {
       genID = UUID.randomUUID().toString();
       doc.putString("_id", genID);
     } else {
       genID = null;
     }
-    DBCollection coll = db.getCollection(collection);
-    DBObject obj = jsonToDBObject(doc);
-    WriteConcern writeConcern = WriteConcern.valueOf(getOptionalStringConfig("writeConcern", ""));
-    // Backwards compatibility
-    if (writeConcern == null) {
-      writeConcern = WriteConcern.valueOf(getOptionalStringConfig("write_concern", ""));
-    }
-    if (writeConcern == null) {
-      writeConcern = db.getWriteConcern();
-    }
-    WriteResult res = coll.save(obj, writeConcern);
-    if (res.getError() == null) {
+    return genID;
+  }
+  
+  private void sendWriteReply(Message<JsonObject> message, WriteResult res, String genID) {
+  	if (res.getError() == null) {
       if (genID != null) {
         JsonObject reply = new JsonObject();
         reply.putString("_id", genID);
@@ -219,6 +207,50 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
     } else {
       sendError(message, res.getError());
     }
+  }
+  
+  // FIXME
+  // Maybe an error here, and this should be read from the message, not the config, as the docs indicate.
+  private WriteConcern getWriteConcern() {
+  	WriteConcern writeConcern = WriteConcern.valueOf(getOptionalStringConfig("writeConcern", ""));
+    // Backwards compatibility
+    if (writeConcern == null) {
+      writeConcern = WriteConcern.valueOf(getOptionalStringConfig("write_concern", ""));
+    }
+    if (writeConcern == null) {
+      writeConcern = db.getWriteConcern();
+    }
+    return writeConcern;
+  }
+
+  private void doSave(Message<JsonObject> message) {
+  	doSaveOrInsert(message, false);
+  }
+  
+  private void doInsert(Message<JsonObject> message) {
+  	doSaveOrInsert(message, true);
+  }
+  
+  private void doSaveOrInsert(Message<JsonObject> message, Boolean insert) {
+  	String collection = getMandatoryString("collection", message);
+  	if (collection == null) {
+  		return;
+  	}
+  	JsonObject doc = getMandatoryObject("document", message);
+  	if (doc == null) {
+  		return;
+  	}
+  	String genID = addGeneratedID(doc);
+  	DBCollection coll = db.getCollection(collection);
+  	DBObject obj = jsonToDBObject(doc);
+  	WriteConcern writeConcern = getWriteConcern();
+  	WriteResult res;
+  	if(insert) {
+  		res = coll.insert(obj, writeConcern);
+  	} else {
+  		res = coll.save(obj, writeConcern);
+  	}
+  	sendWriteReply(message, res, genID);
   }
 
   private void doUpdate(Message<JsonObject> message) {
@@ -240,15 +272,7 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
     Boolean upsert = message.body().getBoolean("upsert", false);
     Boolean multi = message.body().getBoolean("multi", false);
     DBCollection coll = db.getCollection(collection);
-    WriteConcern writeConcern = WriteConcern.valueOf(getOptionalStringConfig("writeConcern", ""));
-    // Backwards compatibility
-    if (writeConcern == null) {
-      writeConcern = WriteConcern.valueOf(getOptionalStringConfig("write_concern", ""));
-    }
-
-    if (writeConcern == null) {
-      writeConcern = db.getWriteConcern();
-    }
+    WriteConcern writeConcern = getWriteConcern();
     WriteResult res = coll.update(criteria, objNew, upsert, multi, writeConcern);
     if (res.getError() == null) {
       JsonObject reply = new JsonObject();
@@ -463,15 +487,7 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
     }
     DBCollection coll = db.getCollection(collection);
     DBObject obj = jsonToDBObject(matcher);
-    WriteConcern writeConcern = WriteConcern.valueOf(getOptionalStringConfig("writeConcern", ""));
-    // Backwards compatibility
-    if (writeConcern == null) {
-      writeConcern = WriteConcern.valueOf(getOptionalStringConfig("write_concern", ""));
-    }
-
-    if (writeConcern == null) {
-      writeConcern = db.getWriteConcern();
-    }
+    WriteConcern writeConcern = getWriteConcern();
     WriteResult res = coll.remove(obj, writeConcern);
     int deleted = res.getN();
     JsonObject reply = new JsonObject().putNumber("number", deleted);

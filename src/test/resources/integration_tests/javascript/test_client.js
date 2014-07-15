@@ -124,6 +124,51 @@ function testSave() {
   });
 }
 
+function testInsert() {
+  eb.send('test.persistor', {
+    collection: 'testcoll',
+    action: 'insert',
+    document: {
+	  name: 'tim',
+	  age: 40,
+	  pi: 3.14159,
+	  male: true,
+	  cheeses: ['brie', 'stilton']
+    }
+  }, function(reply) {
+	vassert.assertEquals('ok', reply.status);
+	var id  = reply._id;
+	vassert.assertTrue(id != undefined);
+
+	// Now "try" to update it, effectively testing the difference between insert and save
+	eb.send('test.persistor', {
+	  collection: 'testcoll',
+	  action: 'insert',
+	  document: {
+	    _id: id,
+	    name: 'tim',
+	    age: 1000
+	  }
+	}, function(reply) {
+	  vassert.assertEquals('error', reply.status);
+	    
+      eb.send('test.persistor', {
+	    collection: 'testcoll',
+	    action: 'findone',
+	    document: {
+	      _id: id
+	    }
+	  }, function(reply) {
+	    vassert.assertEquals('ok', reply.status);
+	    vassert.assertEquals('tim', reply.result.name);
+	    vassert.assertEquals(40, reply.result.age, 0);
+
+        vassert.testComplete();
+      });
+    });
+  });
+}
+
 function testFind() {
 
   eb.send('test.persistor', {
